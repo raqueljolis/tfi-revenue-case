@@ -1,4 +1,6 @@
-"""Reusable data-loading and EDA helper functions for the TFI revenue case."""
+"""Raw data loading and quality checks and exploratory summaries used in 01_eda.ipynb.
+
+"""
 
 from __future__ import annotations
 
@@ -10,13 +12,7 @@ from scipy import stats
 P_COLUMNS = [f"P{i}" for i in range(1, 38)]
 CAT_COLUMNS = ["City", "City Group", "Type"]
 
-# Kaggle's TFI competition launched 2015-01-01; restaurant "age" is measured
-# relative to that date rather than "today", so results stay reproducible.
-REFERENCE_DATE = pd.Timestamp("2015-01-01")
-
-# Province-capital (lat, lon) for every `City` value in the TFI dataset. The raw
-# data has no per-restaurant coordinates, so city centers are used as a stand-in
-# for plotting restaurant locations on a map.
+# Province-capital (lat, lon) for every `City` value in the TFI dataset. 
 CITY_COORDS: dict[str, tuple[float, float]] = {
     "İstanbul": (41.0082, 28.9784),
     "Ankara": (39.9334, 32.8597),
@@ -54,27 +50,6 @@ CITY_COORDS: dict[str, tuple[float, float]] = {
     "Osmaniye": (37.0742, 36.2478),
 }
 
-
-def city_summary(df: pd.DataFrame, target: str = "revenue") -> pd.DataFrame:
-    """Per-city restaurant count and mean target, joined to `CITY_COORDS`.
-
-    Rows for cities missing from `CITY_COORDS` are dropped (with a printed warning)
-    rather than silently mis-plotted at (NaN, NaN).
-    """
-    summary = (
-        df.groupby("City")
-        .agg(n_restaurants=("City", "size"), mean_target=(target, "mean"))
-        .reset_index()
-    )
-    summary["lat"] = summary["City"].map(lambda c: CITY_COORDS.get(c, (None, None))[0])
-    summary["lon"] = summary["City"].map(lambda c: CITY_COORDS.get(c, (None, None))[1])
-
-    missing = summary.loc[summary["lat"].isna(), "City"].tolist()
-    if missing:
-        print(f"Warning: no coordinates for {missing}, dropped from map.")
-    return summary.dropna(subset=["lat", "lon"])
-
-
 def load_data(path: str | Path) -> pd.DataFrame:
     """Load a raw TFI CSV with Open Date parsed as a datetime."""
     return pd.read_csv(path, parse_dates=["Open Date"], date_format="%m/%d/%Y")
@@ -97,15 +72,6 @@ def duplicate_summary(df: pd.DataFrame, subset: list[str] | None = None) -> dict
         "full_row_duplicates": int(full_dupes),
         "content_duplicates_ignoring_id": int(content_dupes),
     }
-
-
-def compute_age_days(
-    df: pd.DataFrame,
-    date_col: str = "Open Date",
-    reference_date: pd.Timestamp = REFERENCE_DATE,
-) -> pd.Series:
-    """Restaurant age in days at `reference_date`, used as a maturity proxy."""
-    return (reference_date - df[date_col]).dt.days
 
 
 def flag_near_constant_columns(
@@ -132,34 +98,30 @@ def spearman_correlation_with_target(
     return pd.Series(corrs).sort_values(key=lambda s: s.abs(), ascending=False)
 
 
+def city_summary(df: pd.DataFrame, target: str = "revenue") -> pd.DataFrame:
+    """Per-city restaurant count and mean target, joined to `CITY_COORDS`.
+
+    Rows for cities missing from `CITY_COORDS` are dropped (with a printed warning)
+    rather than silently mis-plotted at (NaN, NaN).
+    """
+    summary = (
+        df.groupby("City")
+        .agg(n_restaurants=("City", "size"), mean_target=(target, "mean"))
+        .reset_index()
+    )
+    summary["lat"] = summary["City"].map(lambda c: CITY_COORDS.get(c, (None, None))[0])
+    summary["lon"] = summary["City"].map(lambda c: CITY_COORDS.get(c, (None, None))[1])
+
+    missing = summary.loc[summary["lat"].isna(), "City"].tolist()
+    if missing:
+        print(f"Warning: no coordinates for {missing}, dropped from map.")
+    return summary.dropna(subset=["lat", "lon"])
+
+
 def save_fig(fig, filename: str, figures_dir: str | Path = "../reports/figures") -> Path:
     """Save a matplotlib figure to the shared figures directory as a PNG."""
     out_dir = Path(figures_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / filename
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    return out_path
-
-
-def bucket_rare_categories(
-    series: pd.Series, min_count: int = 5, other_label: str = "Other"
-) -> pd.Series:
-    """Collapse categories with fewer than `min_count` occurrences into `other_label`.
-
-    Used for `Type`, where `DT` has a single occurrence: leaving it as-is risks a
-    train/validation split where that category is unseen on one side.
-    """
-    counts = series.value_counts()
-    rare = counts[counts < min_count].index
-    return series.where(~series.isin(rare), other_label)
-
-
-def save_processed(
-    df: pd.DataFrame, filename: str, processed_dir: str | Path = "../data/processed"
-) -> Path:
-    """Save a DataFrame to the shared processed-data directory as a CSV."""
-    out_dir = Path(processed_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / filename
-    df.to_csv(out_path, index=False)
     return out_path
