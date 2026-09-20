@@ -1,5 +1,5 @@
 """Shared setup for nested-CV evaluation, used by `run_eval.py`, `aggregate_results.py`, and
-`03_modeling.ipynb` alike, so all three agree on the training data, CV splits, feature list,
+the notebooks alike, so all agree on the training data, CV splits, feature list,
 and baseline reference without duplicating that setup in each place.
 """
 
@@ -8,7 +8,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
-from sklearn.model_selection import KFold, RepeatedKFold
 
 import evaluate as ev
 
@@ -39,14 +38,15 @@ def feature_cols(train: pd.DataFrame) -> list[str]:
     return [c for c in train.columns if c not in NON_FEATURE_COLS]
 
 
-def build_outer_cv(random_state: int = RANDOM_STATE) -> RepeatedKFold:
-    """5-fold x 10-repeat outer CV, shared by the baseline and every real model."""
-    return RepeatedKFold(n_splits=5, n_repeats=10, random_state=random_state)
+def build_outer_cv(random_state: int = RANDOM_STATE) -> ev.StratifiedTargetKFold:
+    """5-fold x 10-repeat outer CV stratified on revenue quintiles, shared by the baseline and
+    every real model, so each fold's validation set spans the whole revenue range."""
+    return ev.StratifiedTargetKFold(n_splits=5, n_repeats=10, n_bins=5, random_state=random_state)
 
 
-def build_inner_cv(random_state: int = RANDOM_STATE) -> KFold:
-    """Plain 5-fold inner CV, for `GridSearchCV` inside each outer training fold."""
-    return KFold(n_splits=5, shuffle=True, random_state=random_state)
+def build_inner_cv(random_state: int = RANDOM_STATE) -> ev.StratifiedTargetKFold:
+    """5-fold inner CV, also stratified on (training-label) quintiles, for `GridSearchCV`."""
+    return ev.StratifiedTargetKFold(n_splits=5, n_repeats=1, n_bins=5, random_state=random_state)
 
 
 def compute_baseline(train: pd.DataFrame, outer_cv) -> dict:
@@ -95,24 +95,19 @@ class EvalContext:
         self.iqr_k = iqr_k
 
 
-def build_context() -> EvalContext:
-    """Load `train_clean.csv` and construct the CV splits + baseline reference in one call."""
+def build_context(iqr_k: float | None = None) -> EvalContext:
+    """Load `train_clean.csv` and construct the CV splits + baseline reference in one call.
+
+    `iqr_k` set: the context of a revenue-capped variant (tagged `iqr{k}`).
+    """
     train = load_train()
     outer_cv = build_outer_cv()
-    baseline = compute_baseline(train, outer_cv)
     return EvalContext(
         train=train,
         feature_cols=feature_cols(train),
         outer_cv=outer_cv,
         inner_cv=build_inner_cv(),
-        baseline=baseline,
+        baseline=compute_baseline(train, outer_cv),
+        dataset_tag=iqr_tag(iqr_k) if iqr_k is not None else "",
+        iqr_k=iqr_k,
     )
-
-
-def build_context_for_iqr(k: float) -> EvalContext:
-    """`EvalContext` for a `k`x-IQR revenue-capped variant.
-    """
-    ctx = build_context()
-    ctx.dataset_tag = iqr_tag(k)
-    ctx.iqr_k = k
-    return ctx
