@@ -53,12 +53,13 @@ PLAN: list[tuple[str, bool, float | None]] = (
     [(m, use_log, None) for m in ["Ridge", "Lasso", "ElasticNet", "RandomForest", "GradientBoosting"]
      for use_log in (True, False)]
     + [("GradientBoostingHuber", True, None), ("RandomForestMAE", True, None)]
+    + [("LightGBM", use_log, None) for use_log in (True, False)]
     + [(m, use_log, 1.5) for m in ["Ridge", "ElasticNet", "RandomForest"] for use_log in (True, False)]
 )
 
 # Plans for the alternative datasets in `eval_setup.DATASETS`, run with `--dataset NAME`.
 DATASET_PLANS: dict[str, list[tuple[str, bool, float | None]]] = {
-    "provinces": [("RandomForest", True, None)],
+    "provinces": [("RandomForest", True, None), ("LightGBM", True, None)],
 }
 
 log = logging.getLogger("run_eval")

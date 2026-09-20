@@ -7,6 +7,11 @@ import numpy as np
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
 from sklearn.linear_model import ElasticNet, Lasso, Ridge
 
+try:
+    from lightgbm import LGBMRegressor
+except (ImportError, OSError):  # not installed, or its native library (libomp on macOS) is missing
+    LGBMRegressor = None
+
 
 def build_model_specs(random_state: int = 42) -> dict[str, dict]:
     """Estimator + `GridSearchCV` param grid + scaling flag, keyed by model name.
@@ -81,6 +86,30 @@ def build_model_specs(random_state: int = 42) -> dict[str, dict]:
                 "model__subsample": [0.8, 1.0],
                 "model__min_samples_leaf": [1, 5],
                 "model__loss": ["huber"],
+            },
+            "scale": False,
+        },
+    } | _lightgbm_spec(random_state)
+
+
+def _lightgbm_spec(random_state: int) -> dict[str, dict]:
+    """LightGBM entry, empty if the library can't be loaded (so every other model still runs).
+
+    Small-data settings: 137 rows, so few leaves and a small `min_child_samples`; the defaults
+    (31 leaves, 20 samples per leaf) would leave a tree with almost no valid splits. `n_jobs=1`
+    because `GridSearchCV` already parallelises over candidates. Unscaled: trees don't need it.
+    """
+    if LGBMRegressor is None:
+        return {}
+    return {
+        "LightGBM": {
+            "estimator": LGBMRegressor(random_state=random_state, n_jobs=1, verbose=-1),
+            "param_grid": {
+                "model__n_estimators": [200, 400],
+                "model__learning_rate": [0.03, 0.1],
+                "model__num_leaves": [4, 8, 16],
+                "model__min_child_samples": [5, 10, 20],
+                "model__colsample_bytree": [0.5, 1.0],
             },
             "scale": False,
         },

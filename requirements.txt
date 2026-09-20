@@ -8,3 +8,4 @@ plotly==7.1.0
 kaleido==1.4.0
 jupyter
 python-pptx
+lightgbm
