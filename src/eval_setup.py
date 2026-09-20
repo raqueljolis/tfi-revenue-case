@@ -16,6 +16,13 @@ RESULTS_DIR = Path(__file__).resolve().parent.parent / "reports" / "results"
 CHECKPOINT_DIR = RESULTS_DIR / "checkpoints"
 ERROR_LOG = RESULTS_DIR / "errors.log"
 
+# Named datasets selectable with `run_eval.py --dataset`. "" is the original table; the others
+# are tagged into every output filename (e.g. `randomforest_log_provinces_predictions.csv`).
+DATASETS = {
+    "": "train_clean.csv",
+    "provinces": "train_clean_v2.csv",  # train + provinces.csv (built in 02_2_cleaning_features.ipynb)
+}
+
 RANDOM_STATE = 42
 
 TARGET = "revenue"
@@ -95,12 +102,14 @@ class EvalContext:
         self.iqr_k = iqr_k
 
 
-def build_context(iqr_k: float | None = None) -> EvalContext:
-    """Load `train_clean.csv` and construct the CV splits + baseline reference in one call.
+def build_context(iqr_k: float | None = None, dataset: str = "") -> EvalContext:
+    """Load the processed table of `dataset` (see `DATASETS`) and construct the CV splits +
+    baseline reference in one call.
 
-    `iqr_k` set: the context of a revenue-capped variant (tagged `iqr{k}`).
+    `iqr_k` set: the context of a revenue-capped variant (tagged `iqr{k}`, after the dataset tag).
     """
-    train = load_train()
+    train = load_train(PROCESSED_DIR / DATASETS[dataset])
+    tag = "_".join(t for t in (dataset, iqr_tag(iqr_k) if iqr_k is not None else "") if t)
     outer_cv = build_outer_cv()
     return EvalContext(
         train=train,
@@ -108,6 +117,6 @@ def build_context(iqr_k: float | None = None) -> EvalContext:
         outer_cv=outer_cv,
         inner_cv=build_inner_cv(),
         baseline=compute_baseline(train, outer_cv),
-        dataset_tag=iqr_tag(iqr_k) if iqr_k is not None else "",
+        dataset_tag=tag,
         iqr_k=iqr_k,
     )

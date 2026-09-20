@@ -23,6 +23,8 @@ Usage:
     python -u src/run_eval.py                       # the full plan (PLAN below), skipping done ones
     python -u src/run_eval.py --model RandomForest --use_log true            # one combination
     python -u src/run_eval.py --model RandomForest --use_log true --iqr 1.5  # ...capped variant
+    python -u src/run_eval.py --dataset provinces   # RandomForest (log) on train + provinces
+    python -u src/run_eval.py --dataset provinces --model RandomForest --use_log false  # any single one
     python -u src/run_eval.py --force               # recompute even if checkpointed
 """
 
@@ -53,6 +55,11 @@ PLAN: list[tuple[str, bool, float | None]] = (
     + [("GradientBoostingHuber", True, None), ("RandomForestMAE", True, None)]
     + [(m, use_log, 1.5) for m in ["Ridge", "ElasticNet", "RandomForest"] for use_log in (True, False)]
 )
+
+# Plans for the alternative datasets in `eval_setup.DATASETS`, run with `--dataset NAME`.
+DATASET_PLANS: dict[str, list[tuple[str, bool, float | None]]] = {
+    "provinces": [("RandomForest", True, None)],
+}
 
 log = logging.getLogger("run_eval")
 
@@ -159,19 +166,21 @@ def run_combination(model_name: str, use_log: bool, ctx: setup.EvalContext, forc
     return result
 
 
-def run_plan(force: bool = False) -> None:
-    """Every combination in `PLAN`, each isolated so one failure doesn't stop the rest."""
+def run_plan(force: bool = False, dataset: str = "") -> None:
+    """Every combination in `PLAN` (or `DATASET_PLANS[dataset]`), each isolated so one failure
+    doesn't stop the rest."""
+    plan = DATASET_PLANS[dataset] if dataset else PLAN
     contexts: dict[float | None, setup.EvalContext] = {}
     failed = []
     t0 = time.time()
-    for i, (model_name, use_log, iqr_k) in enumerate(PLAN, start=1):
+    for i, (model_name, use_log, iqr_k) in enumerate(plan, start=1):
         if iqr_k not in contexts:
-            contexts[iqr_k] = setup.build_context(iqr_k)
+            contexts[iqr_k] = setup.build_context(iqr_k, dataset)
             log.info("baseline RMSE (%s): %s", contexts[iqr_k].baseline["label"],
                      f"{contexts[iqr_k].baseline['rmse']:,.0f}")
         ctx = contexts[iqr_k]
         label = combination_stem(model_name, use_log, ctx.dataset_tag)
-        log.info("=== combination %d/%d: %s ===", i, len(PLAN), label)
+        log.info("=== combination %d/%d: %s ===", i, len(plan), label)
         try:
             run_combination(model_name, use_log, ctx, force=force)
         except Exception as exc:
@@ -194,6 +203,8 @@ def main() -> None:
     parser.add_argument("--model", choices=list(build_model_specs()), help="run this model alone")
     parser.add_argument("--use_log", type=_str2bool, help="true/false; required together with --model")
     parser.add_argument("--iqr", type=float, help="IQR-cap multiplier (e.g. 1.5); only with --model")
+    parser.add_argument("--dataset", default="", choices=[d for d in setup.DATASETS if d],
+                        help="alternative processed table; alone it runs that dataset's plan (DATASET_PLANS)")
     parser.add_argument("--force", action="store_true", help="recompute even if a checkpoint exists")
     args = parser.parse_args()
 
@@ -204,9 +215,9 @@ def main() -> None:
 
     setup_logging()
     if args.model is not None:
-        run_combination(args.model, args.use_log, setup.build_context(args.iqr), force=args.force)
+        run_combination(args.model, args.use_log, setup.build_context(args.iqr, args.dataset), force=args.force)
     else:
-        run_plan(force=args.force)
+        run_plan(force=args.force, dataset=args.dataset)
 
 
 if __name__ == "__main__":
