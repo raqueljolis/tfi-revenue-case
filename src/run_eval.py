@@ -25,6 +25,9 @@ Usage:
     python -u src/run_eval.py --model RandomForest --use_log true --iqr 1.5  # ...capped variant
     python -u src/run_eval.py --dataset provinces   # RandomForest (log) on train + provinces
     python -u src/run_eval.py --dataset provinces --model RandomForest --use_log false  # any single one
+    python -u src/run_eval.py --variant pca         # a feature-treatment experiment's plan (variants.py)
+    python -u src/run_eval.py --variant all         # all of them: widealpha, pca, nosparse, top10
+    python -u src/run_eval.py --variant top10 --model RandomForest --use_log true   # one combination
     python -u src/run_eval.py --force               # recompute even if checkpointed
 """
 
@@ -46,6 +49,7 @@ import pandas as pd
 
 import evaluate as ev
 import eval_setup as setup
+import variants
 from models import build_model_specs
 
 # (model, use_log, iqr_k or None), in run order.
@@ -55,6 +59,8 @@ PLAN: list[tuple[str, bool, float | None]] = (
     + [("GradientBoostingHuber", True, None), ("RandomForestMAE", True, None)]
     + [("LightGBM", use_log, None) for use_log in (True, False)]
     + [(m, use_log, 1.5) for m in ["Ridge", "ElasticNet", "RandomForest"] for use_log in (True, False)]
+    + [("ExtraTrees", use_log, None) for use_log in (True, False)]
+    + [("ExtraTrees", False, 1.5)]
 )
 
 # Plans for the alternative datasets in `eval_setup.DATASETS`, run with `--dataset NAME`.
@@ -107,9 +113,11 @@ def run_combination(model_name: str, use_log: bool, ctx: setup.EvalContext, forc
         with open(path, "rb") as f:
             return pickle.load(f)
 
-    spec = build_model_specs()[model_name]
+    spec = variants.variant_spec(build_model_specs()[model_name], model_name, ctx.variant)
+    prep, prep_grid = variants.variant_prep(ctx.variant, ctx.feature_cols)
+    param_grid = spec["param_grid"] | prep_grid
     n_combos = 1
-    for values in spec["param_grid"].values():
+    for values in param_grid.values():
         n_combos *= len(values)
     log.info("[run]  %s: grid=%d candidates x %d inner folds, %d outer folds",
              label, n_combos, ctx.inner_cv.get_n_splits(), ctx.outer_cv.get_n_splits(ctx.train))
@@ -126,7 +134,7 @@ def run_combination(model_name: str, use_log: bool, ctx: setup.EvalContext, forc
     fold_rmse, fold_best_params, predictions = ev.nested_cv(
         ctx.train,
         estimator=spec["estimator"],
-        param_grid=spec["param_grid"],
+        param_grid=param_grid,
         feature_cols=ctx.feature_cols,
         outer_cv=ctx.outer_cv,
         inner_cv=ctx.inner_cv,
@@ -134,6 +142,7 @@ def run_combination(model_name: str, use_log: bool, ctx: setup.EvalContext, forc
         scale=spec["scale"],
         use_log=use_log,
         on_fold=on_fold,
+        prep=prep,
     )
 
     rmse_mean = float(fold_rmse.mean())
@@ -165,6 +174,28 @@ def run_combination(model_name: str, use_log: bool, ctx: setup.EvalContext, forc
     log.info("[done] %s: rmse_mean=%s (%+.1f%% vs baseline) in %s",
              label, f"{rmse_mean:,.0f}", result["vs_baseline_pct"], timedelta(seconds=int(time.time() - start)))
     return result
+
+
+def run_variant_plan(variant: str, force: bool = False, dataset: str = "") -> None:
+    """Every combination of `variants.VARIANT_PLANS[variant]` (all variants if `variant == "all"`),
+    each isolated so one failure doesn't stop the rest."""
+    names = list(variants.VARIANT_PLANS) if variant == "all" else [variant]
+    failed = []
+    t0 = time.time()
+    for name in names:
+        ctx = setup.build_context(None, dataset, name)
+        log.info("variant %s (%s); baseline RMSE (%s): %s", name, variants.VARIANTS[name],
+                 ctx.baseline["label"], f"{ctx.baseline['rmse']:,.0f}")
+        for model_name, use_log in variants.VARIANT_PLANS[name]:
+            label = combination_stem(model_name, use_log, ctx.dataset_tag)
+            log.info("=== %s ===", label)
+            try:
+                run_combination(model_name, use_log, ctx, force=force)
+            except Exception as exc:
+                log.info("[error] %s: %r (logged to errors.log, continuing)", label, exc)
+                log_error(label, exc)
+                failed.append(label)
+    log.info("ALL DONE in %s. Failed: %s", timedelta(seconds=int(time.time() - t0)), failed or "none")
 
 
 def run_plan(force: bool = False, dataset: str = "") -> None:
@@ -206,6 +237,8 @@ def main() -> None:
     parser.add_argument("--iqr", type=float, help="IQR-cap multiplier (e.g. 1.5); only with --model")
     parser.add_argument("--dataset", default="", choices=[d for d in setup.DATASETS if d],
                         help="alternative processed table; alone it runs that dataset's plan (DATASET_PLANS)")
+    parser.add_argument("--variant", default="", choices=["all", *variants.VARIANTS],
+                        help="feature-treatment experiment (variants.py); alone it runs that variant's plan")
     parser.add_argument("--force", action="store_true", help="recompute even if a checkpoint exists")
     args = parser.parse_args()
 
@@ -214,9 +247,15 @@ def main() -> None:
     if args.iqr is not None and args.model is None:
         parser.error("--iqr only applies to a single --model run; the full plan already includes capped runs")
 
+    if args.variant == "all" and args.model is not None:
+        parser.error("--variant all runs the whole variant plan; drop --model")
+
     setup_logging()
     if args.model is not None:
-        run_combination(args.model, args.use_log, setup.build_context(args.iqr, args.dataset), force=args.force)
+        ctx = setup.build_context(args.iqr, args.dataset, args.variant)
+        run_combination(args.model, args.use_log, ctx, force=args.force)
+    elif args.variant:
+        run_variant_plan(args.variant, force=args.force, dataset=args.dataset)
     else:
         run_plan(force=args.force, dataset=args.dataset)
 

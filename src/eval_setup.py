@@ -10,6 +10,7 @@ from pathlib import Path
 import pandas as pd
 
 import evaluate as ev
+import variants
 
 PROCESSED_DIR = Path(__file__).resolve().parent.parent / "data" / "processed"
 RESULTS_DIR = Path(__file__).resolve().parent.parent / "reports" / "results"
@@ -92,6 +93,7 @@ class EvalContext:
         baseline: dict,
         dataset_tag: str = "",
         iqr_k: float | None = None,
+        variant: str = "",
     ):
         self.train = train
         self.feature_cols = feature_cols
@@ -100,23 +102,26 @@ class EvalContext:
         self.baseline = baseline
         self.dataset_tag = dataset_tag
         self.iqr_k = iqr_k
+        self.variant = variant
 
 
-def build_context(iqr_k: float | None = None, dataset: str = "") -> EvalContext:
+def build_context(iqr_k: float | None = None, dataset: str = "", variant: str = "") -> EvalContext:
     """Load the processed table of `dataset` (see `DATASETS`) and construct the CV splits +
     baseline reference in one call.
 
     `iqr_k` set: the context of a revenue-capped variant (tagged `iqr{k}`, after the dataset tag).
+    `variant` set (see `variants.VARIANTS`): a feature-treatment experiment, tagged after the dataset tag.
     """
-    train = load_train(PROCESSED_DIR / DATASETS[dataset])
-    tag = "_".join(t for t in (dataset, iqr_tag(iqr_k) if iqr_k is not None else "") if t)
+    train = variants.variant_rows(load_train(PROCESSED_DIR / DATASETS[dataset]), variant)
+    tag = "_".join(t for t in (dataset, variant, iqr_tag(iqr_k) if iqr_k is not None else "") if t)
     outer_cv = build_outer_cv()
     return EvalContext(
         train=train,
-        feature_cols=feature_cols(train),
+        feature_cols=variants.variant_feature_cols(feature_cols(train), variant),
         outer_cv=outer_cv,
         inner_cv=build_inner_cv(),
         baseline=compute_baseline(train, outer_cv),
         dataset_tag=tag,
         iqr_k=iqr_k,
+        variant=variant,
     )

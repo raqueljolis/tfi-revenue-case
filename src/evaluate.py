@@ -80,10 +80,13 @@ def cross_val_constant_baseline(
     return np.array(scores)
 
 
-def build_pipeline(estimator, scale: bool = True, use_log: bool = False):
-    """Wrap `estimator` as the `"model"` step, preceded by a `StandardScaler` if `scale`.
+def build_pipeline(estimator, scale: bool = True, use_log: bool = False, prep=None):
+    """Wrap `estimator` as the `"model"` step, preceded by a `StandardScaler` if `scale` and then
+    by `prep` (a transformer, e.g. PCA / column selection from `variants.py`) if given.
     """
     steps = [("scaler", StandardScaler())] if scale else []
+    if prep is not None:
+        steps.append(("prep", clone(prep)))
     steps.append(("model", clone(estimator)))
     pipeline = Pipeline(steps)
     if use_log:
@@ -112,6 +115,7 @@ def nested_cv(
     n_jobs: int = -1,
     use_log: bool = True,
     on_fold=None,
+    prep=None,
 ) -> tuple[np.ndarray, list[dict], pd.DataFrame]:
     """Nested CV: grid-search hyperparameters inside every outer training fold.
 
@@ -127,6 +131,9 @@ def nested_cv(
     `Q3 + iqr_k x IQR` fence (Q1/Q3 from its training rows only, so no validation value leaks
     into the fence) before fitting. Capping happens before the optional `log1p`.
 
+    `prep`, if given, is an extra pipeline step fitted inside every training fold (its tunable
+    parameters go in `param_grid` as `prep__...`).
+
     `on_fold(fold, n_folds, fold_rmse)`, if given, is called after every outer fold (progress).
 
     Returns the per-fold RMSE array, each fold's `best_params_` (hyperparameters that vary wildly
@@ -140,7 +147,7 @@ def nested_cv(
     y = df[target].to_numpy(dtype=float)
     ids = df[id_col].to_numpy()
 
-    template = build_pipeline(estimator, scale, use_log)
+    template = build_pipeline(estimator, scale, use_log, prep)
     grid = _prefixed_param_grid(param_grid, use_log)
     n_folds = outer_cv.get_n_splits(df)
     n_splits = getattr(outer_cv, "n_splits", n_folds)

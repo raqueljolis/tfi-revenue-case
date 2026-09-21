@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import numpy as np
-from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.ensemble import ExtraTreesRegressor, GradientBoostingRegressor, RandomForestRegressor
 from sklearn.linear_model import ElasticNet, Lasso, Ridge
 
 try:
@@ -43,6 +43,20 @@ def build_model_specs(random_state: int = 42) -> dict[str, dict]:
                 "model__min_samples_leaf": [1, 3, 5],
                 "model__max_features": ["sqrt",0.5, 1.0],
                 "model__max_samples": [None, 0.8],
+            },
+            "scale": False,
+        },
+        "ExtraTrees": {
+            # RandomForest's sibling: split thresholds are drawn at random instead of searched,
+            # which lowers the variance further. Same grid minus `max_samples` (no bootstrap by
+            # default, so it doesn't apply); its `max_features` default is all features, so the
+            # grid keeps sqrt / 0.5 as well.
+            "estimator": ExtraTreesRegressor(random_state=random_state, n_jobs=1),
+            "param_grid": {
+                "model__n_estimators": [200, 500],
+                "model__max_depth": [None, 8],
+                "model__min_samples_leaf": [1, 3, 5],
+                "model__max_features": ["sqrt", 0.5, 1.0],
             },
             "scale": False,
         },
